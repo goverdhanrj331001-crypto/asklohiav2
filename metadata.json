@@ -1,0 +1,11 @@
+{
+  "name": "lohia college ai",
+  "description": "An advanced voice-enabled AI assistant for Lohia College, providing instant information about campus history, faculty, exams, and events.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "AI Chat",
+    "Information Sync"
+  ]
+}
