@@ -59,7 +59,7 @@ const COLLEGE_CONTACTS = {
   officePhone: '01562-250362',
   officeEmail: 'lohiacollegechuru@gmail.com',
   collegeAddress: 'Opposite Railway Station, Station Road, Churu, Rajasthan - 331001',
-  principalImageUrl: 'https://pub-8bc21fd3ffc042a79a7bf25ee57d61d1.r2.dev/1776447857209-image_1775737334679.png',
+  principalImageUrl: 'https://pub-8bc21fd3ffc042a79a7bf25ee57d61d1.r2.dev/1776921818854-principal-main-image.webp',
 } as const;
 // ────────────────────────────────────────────────────────────────────────────
 
