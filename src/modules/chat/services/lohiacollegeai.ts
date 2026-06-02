@@ -1013,7 +1013,7 @@ const AGENT_PERSONAS = {
   vision: `Expert: Vision Agent. FOCUS: OCR and Identity Extraction. Goal: Confirm data accuracy from uploaded images.`,
   gallery: `Expert: Gallery Specialist. FOCUS: Visual Media, Albums, and Event Records. Goal: Proactively find and present relevant photos and videos. If the user asks for photos of a specific person or event (e.g., 'Alumni'), search for it and use [[GALLERY_GRID:Query]] to show a summary grid. If they just want a general view, use [[GALLERY_SLIDER:Category]]. You are "Ultra Smart" â€“ you ignore minor typos and find related media automatically. CRITICAL: If the [SEMANTIC_HINT] or [Context] provides any media results, you MUST use the grid or slider marker. Never apologize for missing photos if data is present in the context.`,
   event: `Expert: Event Manager. FOCUS: Events, schedules, speakers, and event images. Goal: Always use [[EVENT_EXPLORER:optionalQuery]] to show the rich event UI. If query has typos, suggest the closest match.`,
-  toppers: `Expert: Toppers & Merit Specialist. FOCUS: College toppers, gold medalists, and merit lists from archives (1945 onwards). Goal: Always use [[TOPPERS_EXPLORER:Board:SearchQuery]] (e.g., [[TOPPERS_EXPLORER:Degree Exam (Science):1985]] or [[TOPPERS_EXPLORER::1985]]) using colons to show the Hall of Fame UI. ALWAYS call 'search_merit_list' to find names from college records, present their names in the text response, and append the explorer.`
+  toppers: `Expert: Toppers & Merit Specialist. FOCUS: College toppers, gold medalists, and merit lists from archives. DO NOT use ANY hardcoded year ranges like 1984-1995 or 1945 — ALWAYS get the actual min/max years from the search_merit_list results. Goal: Always use [[TOPPERS_EXPLORER:Board:SearchQuery]] (e.g., [[TOPPERS_EXPLORER:Degree Exam (Science):1985]] or [[TOPPERS_EXPLORER::1985]]) using colons to show the Hall of Fame UI. ALWAYS call 'search_merit_list' to find names from college records, present their names in the text response, and append the explorer.`
 };
 
 const SYSTEM_PROMPT = `You are "Lohia College AI", a High-Performance Multi-Agent System. 
@@ -1168,10 +1168,14 @@ export async function* generateChatResponseStream(
   profile?: StudentProfile, signal?: AbortSignal): AsyncGenerator<{ text: string; provider?: string }> {
   try {
     // FIX: Fast cache check must happen FIRST — before any DB/async calls
-    const fastAnswer = findFastAnswer(prompt);
-    if (fastAnswer) {
-      yield { text: fastAnswer, provider: "Lohia-Speed-Cache" };
-      return;
+    // BUT SKIP CACHE FOR TOPPER/MERIT QUERIES
+    const isMeritQuery = hasMeritIntent(prompt);
+    if (!isMeritQuery) {
+      const fastAnswer = findFastAnswer(prompt);
+      if (fastAnswer) {
+        yield { text: fastAnswer, provider: "Lohia-Speed-Cache" };
+        return;
+      }
     }
 
     const semanticCorrection = findSemanticMatch(prompt);
@@ -1179,10 +1183,9 @@ export async function* generateChatResponseStream(
     // Collect all matching responses instead of returning early
     const responses: string[] = [];
 
-    const pastPrincipalYear = extractYear(prompt);
     if (hasPrincipalContactIntent(prompt)) {
       responses.push(await formatPrincipalContactResponse());
-    } else if (/principal|principal\s*mam|ప్రింసిపల్|ప్రధానాచార్య/i.test(prompt) && !pastPrincipalYear) {
+    } else if (/principal|principal\s*mam|ప్రింసిపల్|ప్రధానాచార్య/i.test(prompt)) {
       const principalInfo = await getPrincipalInfo();
       responses.push(`[[PRINCIPAL_CARD:${principalInfo?.value || COLLEGE_CONTACTS.principalName}:${COLLEGE_CONTACTS.principalImageUrl}]]\n\nHamari college ki principal **${principalInfo?.value || COLLEGE_CONTACTS.principalName}** hain.`);
     }
@@ -1253,22 +1256,25 @@ export async function* generateChatResponseStream(
           board_type: boardType,
           student_name: ''
         });
+        let minYear: number | undefined;
         let maxYear: number | undefined;
         if (rows.length === 0 && year) {
           const latestRows = await searchMeritList({ board_type: boardType, student_name: '' });
           const years = latestRows.map((row: any) => Number(row.exam_year)).filter(Boolean);
+          minYear = years.length ? Math.min(...years) : undefined;
           maxYear = years.length ? Math.max(...years) : undefined;
-          if (maxYear && Number(year) > maxYear) {
-            responses.push(`${year} ka merit-list record abhi mere paas nahi mila. Mere paas abhi ${maxYear} tak ka verified topper data mil raha hai. Aapko hui takleef ke liye khed hai; newer records update hote hi main aur accurate answer de paunga.`);
+          if (year && ((minYear && Number(year) < minYear) || (maxYear && Number(year) > maxYear))) {
+            responses.push(`${year} ka merit-list record abhi mere paas nahi mila. Mere paas abhi ${minYear} se ${maxYear} tak ka verified topper data mil raha hai. Aapko hui takleef ke liye khed hai; records update hote hi main aur accurate answer de paunga.`);
           }
         }
-        if (!(rows.length === 0 && year && maxYear && Number(year) > maxYear)) {
+        if (!(rows.length === 0 && year && ((minYear && Number(year) < minYear) || (maxYear && Number(year) > maxYear)))) {
           responses.push(formatMeritRows(rows, boardType, year));
         }
       }
     }
 
-    if (pastPrincipalYear && /principal|ప్రింసిపల్|ప్రధానాచార్య/i.test(prompt)) {
+    const pastPrincipalYear = extractYear(prompt);
+    if (pastPrincipalYear && /principal|प्रिंसिपल|प्रधानाचार्य/i.test(prompt)) {
       const rows = await getAllPastPrincipals(pastPrincipalYear);
       responses.push(formatPastPrincipalRows(rows, pastPrincipalYear));
     }
@@ -1358,7 +1364,7 @@ export async function* generateChatResponseStream(
 
     const lowerPrompt = prompt.toLowerCase();
 
-    if (globalCacheHit) {
+    if (globalCacheHit && !isMeritQuery) {
       yield { text: sanitizeUserText(globalCacheHit), provider: "Lohia-Global-Cache" };
       return;
     }
