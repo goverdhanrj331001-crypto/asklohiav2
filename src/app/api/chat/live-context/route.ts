@@ -7,7 +7,7 @@ export async function GET() {
   try {
     const [infoRes, meritRes] = await Promise.all([
       supabase.from('college_info').select('*'),
-      supabase.from('college_merit_list').select('exam_year, board_type').order('exam_year', { ascending: false }).limit(100)
+      supabase.from('college_merit_list').select('exam_year, board_type').order('exam_year', { ascending: false })
     ]);
 
     // Calculate Merit metadata for context
