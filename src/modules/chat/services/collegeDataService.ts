@@ -969,7 +969,7 @@ export const searchMeritList = async (params: { board_type?: string; exam_year?:
       query = query.eq('exam_year', searchYear);
     }
 
-    const { data, error } = await query.order('exam_year', { ascending: false }).order('id', { ascending: true }).limit(200);
+    const { data, error } = await query.order('exam_year', { ascending: false }).order('id', { ascending: true });
     if (error) throw error;
     
     let results = data || [];
@@ -1005,7 +1005,7 @@ export const searchMeritList = async (params: { board_type?: string; exam_year?:
       }
     }
 
-    return results.slice(0, 15);
+    return results;
   } catch (error) {
     console.error("Error searching merit list:");
     return [];
