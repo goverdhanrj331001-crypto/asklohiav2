@@ -1,23 +1,23 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Trophy, Award, Search, GraduationCap, Calendar, User, Star, ArrowLeft, Home, BookOpen, ChevronRight, Medal } from 'lucide-react';
 import { searchMeritList, MeritRecord } from '../services/collegeDataService';
 
 const DEFAULT_BOARDS = [
-  'Inter/Pre-Univ Exam (Commerce) - Intermediate',
-  'Inter/Pre-Univ Exam (Commerce) - Pre-University',
+  'Degree Exam (Arts)',
+  'Degree Exam (Science)',
+  'Degree Exam (Commerce)',
+  'M.A. Examinations',
+  'M.Sc. Examinations',
+  'M.Com Examinations',
   'Inter/Pre-Univ Exam (Arts) - Intermediate',
   'Inter/Pre-Univ Exam (Arts) - Pre-University',
   'Inter/Pre-Univ Exam (Science) - Intermediate',
   'Inter/Pre-Univ Exam (Science) - Pre-University',
-  'Degree Exam (Science)',
-  'Degree Exam (Arts)',
-  'Degree Exam (Commerce)',
-  'Degree Exam (B.Com/B.A./B.Sc.) - Commerce Stream',
-  'M.Sc. Examinations',
-  'M.A. Examinations',
+  'Inter/Pre-Univ Exam (Commerce) - Intermediate',
+  'Inter/Pre-Univ Exam (Commerce) - Pre-University',
   'University Colour Holders',
   'Inter University Proficiency'
 ];
@@ -41,6 +41,22 @@ export const ToppersExplorer = ({
   const [selectedStudent, setSelectedStudent] = useState<MeritRecord | null>(null);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState(initialSearchQuery || '');
+  const [visibleCount, setVisibleCount] = useState(5);
+  const observer = useRef<IntersectionObserver | null>(null);
+  const lastElementRef = useCallback((node: HTMLDivElement) => {
+    if (loading) return;
+    if (observer.current) observer.current.disconnect();
+    observer.current = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting && visibleCount < meritList.length) {
+        setVisibleCount(prev => Math.min(prev + 5, meritList.length));
+      }
+    });
+    if (node) observer.current.observe(node);
+  }, [loading, visibleCount, meritList.length]);
+
+  useEffect(() => {
+    setVisibleCount(5);
+  }, [meritList]);
 
   const handleBoardSelection = async (board: string) => {
     setSelectedBoard(board);
@@ -214,9 +230,10 @@ export const ToppersExplorer = ({
                   </div>
                 ) : meritList.length > 0 ? (
                     <div className="grid grid-cols-1 gap-3">
-                      {meritList.map((record) => (
+                      {meritList.slice(0, visibleCount).map((record, index) => (
                         <motion.div 
                           key={record.id}
+                          ref={index === visibleCount - 1 ? lastElementRef : null}
                           initial={{ opacity: 0, y: 15 }}
                           whileInView={{ opacity: 1, y: 0 }}
                           viewport={{ once: true, margin: "-20px" }}
@@ -250,6 +267,11 @@ export const ToppersExplorer = ({
                           <ChevronRight className="w-5 h-5 text-zinc-400 dark:text-[#eeeeef] transition-colors" />
                         </motion.div>
                       ))}
+                      {visibleCount < meritList.length && (
+                        <div className="flex items-center justify-center py-4">
+                          <div className="w-6 h-6 border-3 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                        </div>
+                      )}
                     </div>
                   ) : (
                   <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
@@ -291,9 +313,9 @@ export const ToppersExplorer = ({
                     <div className="absolute inset-0 bg-gradient-to-br from-zinc-800 to-zinc-950"></div>
                     <div className="absolute inset-0 bg-gradient-to-tr from-blue-500/10 to-transparent"></div>
                     
-                    {/* Founder image as profile avatar filling the container */}
+                    {/* Topper image as profile avatar filling the container */}
                     <img 
-                      src="/founder.png" 
+                      src="/topper.jpg" 
                       alt={selectedStudent?.student_name}
                       className="w-full h-full object-cover relative z-10"
                     />
