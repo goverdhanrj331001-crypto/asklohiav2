@@ -294,6 +294,20 @@ export const getPrincipalInfo = async () => {
   }
 };
 
+export const getPrincipalFullInfo = async () => {
+  try {
+    const { data, error } = await supabase.from('college_info').select('key, value, image_url').eq('key', 'principal_info').maybeSingle();
+    if (error) {
+      console.error("Supabase error fetching principal full info:", error);
+      throw error;
+    }
+    return data;
+  } catch (error) {
+    console.error("Error fetching principal full info:", error);
+    return null;
+  }
+};
+
 export const getCollegeSections = async (key?: string) => {
   try {
     let query = supabase.from('college_knowledge').select('id, category, search_key, title, content, updated_at');
