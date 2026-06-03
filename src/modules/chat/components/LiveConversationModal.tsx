@@ -83,7 +83,7 @@ export const LiveConversationModal = ({ isOpen, onClose }: LiveConversationModal
             {dailyLimitReached ? "Daily Limit Reached" : error ? "Voice Connection Failed" : "How Can I Help\nYou Today ?"}
           </h2>
 
-          <div className={`${dailyLimitReached ? 'mt-4' : 'h-24 overflow-y-auto custom-scrollbar mask-fade-out'} px-4 flex flex-col items-center justify-start`}>
+          <div className={`${dailyLimitReached ? 'mt-4' : ''} px-4 flex flex-col items-center justify-start`}>
             {dailyLimitReached ? (
               <motion.div
                 initial={{ opacity: 0, y: 5 }}
@@ -96,20 +96,7 @@ export const LiveConversationModal = ({ isOpen, onClose }: LiveConversationModal
                   <span className="text-xl font-bold tracking-wider font-space">{timeUntilReset}</span>
                 </div>
               </motion.div>
-            ) : (
-              <AnimatePresence mode="popLayout">
-                {transcript.split('\n').slice(0, 3).map((line, i) => (
-                  <motion.p 
-                    key={i}
-                    initial={{ opacity: 0, y: 5 }}
-                    animate={{ opacity: 1 - (i * 0.3), y: 0 }}
-                    className={`text-sm mb-2 font-medium ${line.startsWith('AI:') ? 'text-purple-300' : 'text-white/80'}`}
-                  >
-                    {line}
-                  </motion.p>
-                ))}
-              </AnimatePresence>
-            )}
+            ) : null}
           </div>
         </motion.div>
       </div>
