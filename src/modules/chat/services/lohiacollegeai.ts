@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
-import { searchFaculty, getPrincipalInfo, getCollegeSections, getAllPastPrincipals, getAllAchievements, searchMainExams, searchStudyMaterial, searchPracticalExams, searchPracticalStudentsByName, searchGallery, getGalleryCategories, searchEvents, searchCourses, searchMeritList, getMeritBoards, searchKnowledgeBase, searchMaterialsChat, searchAlertsChat, searchSports, searchAllCollegeData, searchKnowledgeItems } from "./collegeDataService";
+import { searchFaculty, getPrincipalInfo, getPrincipalFullInfo, getCollegeSections, getAllPastPrincipals, getAllAchievements, searchMainExams, searchStudyMaterial, searchPracticalExams, searchPracticalStudentsByName, searchGallery, getGalleryCategories, searchEvents, searchCourses, searchMeritList, getMeritBoards, searchKnowledgeBase, searchMaterialsChat, searchAlertsChat, searchSports, searchAllCollegeData, searchKnowledgeItems } from "./collegeDataService";
 import { supabase } from "@/lib/supabase";
 import { StudentProfile } from "@/modules/profile/types";
 import Fuse from 'fuse.js';
@@ -249,6 +249,92 @@ const formatFacultyFieldResponse = (faculty: any, fields: Array<{ key: string; l
   return `**${name} ki requested details:**\n\n| Field | Detail |\n|---|---|\n${rows.join('\n')}`;
 };
 
+const parsePrincipalInfoSection = (infoText: string, query: string): string => {
+  const lowerQuery = query.toLowerCase();
+
+  const sections = [
+    {
+      keywords: ['education', 'qualification', 'degree', 'padhai', 'educational'],
+      title: 'Educational Qualifications:',
+      alternateTitle: 'Qualification:'
+    },
+    {
+      keywords: ['book', 'publication', 'publish', 'kitab', 'pustak', 'published'],
+      title: 'Publications and Books:'
+    },
+    {
+      keywords: ['research', 'phd', 'p.hd', 'project', 'academic work'],
+      title: 'Research and Academic Work:'
+    },
+    {
+      keywords: ['contribution', 'academic contribution', 'magazine', 'seminar', 'conference'],
+      title: 'Academic Contributions:'
+    },
+    {
+      keywords: ['activity', 'activities', 'social', 'plantation', 'radio', 'student welfare'],
+      title: 'Social and Institutional Activities:'
+    },
+    {
+      keywords: ['award', 'honor', 'samman', 'award and honor', 'nagar shri'],
+      title: 'Awards and Honors:'
+    },
+    {
+      keywords: ['editorial', 'editor', 'alok', 'magazine editor'],
+      title: 'Editorial Work:'
+    },
+    {
+      keywords: ['personal', 'dob', 'date of birth', 'father', 'email', 'mobile', 'phone', 'contact', 'specialization'],
+      title: 'Personal Details:'
+    }
+  ];
+
+  const lines = infoText.split(/\r?\n/);
+  const matchedSections = sections.filter(sec =>
+    sec.keywords.some(keyword => lowerQuery.includes(keyword))
+  );
+
+  if (matchedSections.length === 0) {
+    const keywordsIndex = infoText.indexOf('Keywords:');
+    if (keywordsIndex !== -1) {
+      return infoText.substring(0, keywordsIndex).trim();
+    }
+    return infoText;
+  }
+
+  const results: string[] = [];
+  const allHeaders = sections.map(s => s.title).concat(['Keywords:', 'Principal Information', 'Personal Details:']);
+
+  for (const sec of matchedSections) {
+    const header = sec.title;
+    let startIndex = lines.findIndex(line => line.trim().startsWith(header));
+
+    if (startIndex === -1 && sec.alternateTitle) {
+      startIndex = lines.findIndex(line => line.trim().startsWith(sec.alternateTitle));
+    }
+
+    if (startIndex !== -1) {
+      const sectionLines: string[] = [lines[startIndex]];
+      let i = startIndex + 1;
+
+      while (i < lines.length) {
+        const line = lines[i].trim();
+        if (allHeaders.some(h => line.startsWith(h))) {
+          break;
+        }
+        sectionLines.push(lines[i]);
+        i++;
+      }
+      results.push(sectionLines.join('\n').trim());
+    }
+  }
+
+  if (results.length > 0) {
+    return `**Prof. (Dr.) Manju Sharma (Principal) - Requested Details:**\n\n` + results.join('\n\n');
+  }
+
+  return infoText;
+};
+
 const extractYear = (text: string) => text.match(/\b(19\d{2}|20\d{2})\b/)?.[0];
 
 const inferBoardType = (text: string) => {
@@ -383,6 +469,31 @@ const hasExamScheduleIntent = (text: string) => {
   return asksDate && !isAdmissionForm && !isPersonDate && !isNonExamWhen;
 };
 
+const hasCollegeDomainSignal = (text: string) => {
+  const lower = text.toLowerCase();
+  return /lohia|college|admission|exam|paper|timetable|faculty|teacher|principal|course|seat|fee|fees|scholarship|library|hostel|ncc|nss|sports|event|notice|notification|material|gallery|topper|merit|department|semester|ug|pg|b\.?\s*a|b\.?\s*sc|b\.?\s*com|m\.?\s*a|m\.?\s*sc|m\.?\s*com|kamra|room|building|classroom|lab|office|कालेज|कॉलेज|परीक्षा|पेपर|प्रवेश|शुल्क|पुस्तकालय|छात्रावास/.test(lower);
+};
+
+const hasLowValueCasualIntent = (text: string) => {
+  const lower = text.toLowerCase().trim();
+  const hasQuestionLikeShape = /kya|kay|kaun|kon|kab|kitna|kitni|bata|batao|tell|what|who|when|how|कौन|क्या|कब|कितना|कितनी/.test(lower);
+  const nonsenseNames = /\b(papu|pappu|raju|golu|monu|sonu|chintu|pintu)\b/.test(lower);
+  const personalOutcome = /pass|fail|paas|fail|ho gaya|hogaya|ho gya|result/.test(lower) && nonsenseNames;
+  return hasQuestionLikeShape && (personalOutcome || (!hasCollegeDomainSignal(lower) && lower.split(/\s+/).length <= 10));
+};
+
+const getPoliteScopeFallback = (text: string) => {
+  if (hasLowValueCasualIntent(text)) {
+    return "Main Lohia College se related verified information me help kar sakti hoon, jaise admission, exam papers, timetable, faculty, notices, study material, events, sports ya college facilities. Is sawal ka college records se clear relation nahi mil raha, isliye main is par confirmed jawab nahi de paungi.";
+  }
+
+  if (hasCollegeDomainSignal(text)) {
+    return "Maaf kijiye, is specific detail ki verified jankari abhi mere paas available records me nahi mil rahi. Main galat answer dene ke bajay clear bata rahi hoon: aap admission, exams, papers, faculty, notices, materials, events ya facilities se related detail thodi aur clear kar dein, main dobara check kar dungi.";
+  }
+
+  return "";
+};
+
 const hasGalleryPhotoIntent = (text: string) => {
   const lower = text.toLowerCase();
   const wantsMedia = /photo|photos|image|images|pic|pics|tasveer|à¤¤à¤¸à¥à¤µà¥€à¤°|à¤«à¥‹à¤Ÿà¥‹|à¤‡à¤®à¥‡à¤œ/.test(lower);
@@ -496,17 +607,29 @@ const getCollegeSectionIntents = (text: string) => {
   return keys;
 };
 
+const isHarmfulOrViolent = (text: string) => {
+  const lower = text.toLowerCase();
+  return /(mar dunga|maar dunga|maar doonga|mar doonga|murder|kill|hate|hinsa|à¤¹à¤¿à¤‚à¤¸à¤¾|hatred|attack|nuksan|à¤¨à¥à¤•à¤¸à¤¾à¤¨|harm|hurt)/i.test(lower);
+};
+
 const hasNegativeFeedbackIntent = (text: string) => {
   const lower = text.toLowerCase();
+  if (isHarmfulOrViolent(text)) return false;
   return /kharab|bura|bur[a-z]*|bekar|bad|worst|poor|ghatiya|achha\s+nahi|acha\s+nahi|nahi\s+padhate|à¤¨à¤•à¤¼à¤°à¤¾à¤¬|à¤–à¤°à¤¾à¤¬|à¤¬à¥à¤°à¤¾|à¤¬à¥‡à¤•à¤¾à¤°|à¤˜à¤Ÿà¤¿à¤¯à¤¾|complaint|shikayat|à¤¶à¤¿à¤•à¤¾à¤¯à¤¤|problem|issue/.test(lower);
 };
 
 const hasPersonFeedbackIntent = (text: string) => {
   const lower = text.toLowerCase();
+  if (isHarmfulOrViolent(text)) return false;
   return hasNegativeFeedbackIntent(text) && /sir|mam|ma'am|madam|teacher|faculty|professor|principal|padhate|padate|teach|teaching|ji|à¤¸à¤°|à¤®à¥ˆà¤¡à¤®|à¤¶à¤¿à¤•à¥à¤·à¤•|à¤ªà¤¢à¤¼à¤¾à¤¤à¥‡|à¤ªà¥à¤°à¤¿à¤‚à¤¸à¤¿à¤ªà¤²/.test(lower);
 };
 
 const formatExamRows = (rows: any[], subject?: string) => {
+  const clarification = rows.find((row: any) => row?.needs_clarification);
+  if (clarification) {
+    return clarification.message || 'Exam schedule ke liye kripya status, level aur semester batayein.';
+  }
+
   if (!rows.length) {
     return `${subject || 'Is subject'} ke matching exam records abhi available information me nahi mile. Kripya status, level aur semester check karke dobara search karein.`;
   }
@@ -823,16 +946,17 @@ export const achievementsTool: FunctionDeclaration = {
 
 export const mainExamsTool: FunctionDeclaration = {
   name: "search_main_exams",
-  description: "IMPORTANT: ONLY CALL THIS TOOL IF YOU HAVE ALL THREE PARAMETERS! Search for main exam schedules by level (UG or PG), semester (number 1-6), and status (Collegiate or Non-Collegiate).",
+  description: "Search verified main exam schedules from college database. Use query for the user's original wording. If status, level, or semester are missing, this tool returns a clarification request instead of guessing.",
   parameters: {
     type: Type.OBJECT,
     properties: {
-      department: { type: Type.STRING, description: "Optional: Specific subject/department to search for" },
-      level: { type: Type.STRING, description: "MANDATORY: Must be either 'UG' (Undergraduate) or 'PG' (Postgraduate)" },
-      semester: { type: Type.NUMBER, description: "MANDATORY: Semester number between 1 and 6" },
-      status: { type: Type.STRING, description: "MANDATORY: Must be either 'Collegiate' or 'Non-Collegiate'" }
-    },
-    required: ["level", "semester", "status"]
+      query: { type: Type.STRING, description: "The user's full original exam/paper question in their own words" },
+      department: { type: Type.STRING, description: "Optional: broad department/stream such as Science, Arts, Commerce" },
+      subject: { type: Type.STRING, description: "Optional: specific subject such as Physics, Chemistry, Hindi, ABST" },
+      level: { type: Type.STRING, description: "UG or PG if the user has provided it" },
+      semester: { type: Type.NUMBER, description: "Semester number between 1 and 6 if provided" },
+      status: { type: Type.STRING, description: "Collegiate or Non-Collegiate if provided" }
+    }
   }
 };
 
@@ -1051,7 +1175,8 @@ const SYSTEM_PROMPT = `You are "Lohia College AI", a High-Performance Multi-Agen
 ###  INTELLIGENCE:
 - Fix typos automatically (e.g., "umesd" -> Dr. Umed Singh Gothwal).
 - If context has a matched person, answer the user's requested field(s) first. Show a profile/explorer only when the user explicitly asks for photo, profile, full details, card, or "dikhao".
-- For Vision/Mission/Hostel/Exam Rules: Provide the FULL content from context. For "passing marks" or "score" queries, ALWAYS check the 'customRules' from context or call 'get_exam_passing_rules' and provide detailed, accurate information based ONLY on that data.
+- For Vision/Mission/Hostel/Exam Rules: If user asks a SPECIFIC QUESTION (like "how many rooms in hostel?", "how many books in library?"), extract ONLY the exact answer they asked for from the available data. If they ask for GENERAL INFORMATION, provide the full relevant context.
+- For "passing marks" or "score" queries, ALWAYS check the 'customRules' from context or call 'get_exam_passing_rules' and provide detailed, accurate information based ONLY on that data.
 - **EXAM FORM**: Use this ONLY if the user has NOT provided subject, status, level, or semester. If they have already searched (as in [Context]) and results were missing, DO NOT show this form. Marker: [[EXAM_FORM:SubjectName]].
 - **ADMISSION FORM**: If they ask for "admission form" or "new entry form", show the admission details.
 - **NO REPETITIVE FORMS**: If [Context] says results were not found or if the user already provided all details, DO NOT show any form again. Use the guidance in [Context] to explain the situation. For simple greetings like "hi", "hello", DO NOT show any forms.
@@ -1060,6 +1185,7 @@ const SYSTEM_PROMPT = `You are "Lohia College AI", a High-Performance Multi-Agen
 - **SPORTS BROAD MATCHING**: If user asks "football me gold medalist kaun hai" but the matching information is University Colour Holders or winning team records for football, give those football records. Do not answer "no gold medalist" merely because the exact word gold is absent. If no year is given, show all matching sport records; if a year is given, show that year's matching records.
 - **PAST PRINCIPALS**: For year-based principal questions, answer in a polished Markdown table with Name, From, To, and Tenure/Notes. Do NOT use cards for past principals unless the user asks for photo/profile.
 - **SMART SYNTHESIS**: If the exact question is not a direct row (example: "Lohia College dusre college se kaise acha hai"), combine relevant college facts from history, courses, faculty, library, achievements, sports, events, facilities, and FAQs into a sensible answer. Never say information is missing when related facts exist.
+- **MISSING SPECIFIC DETAILS**: If the user asks for a specific detail that is NOT available in our records, respond positively in their language saying something like "Yeh specific jaankari abhi mere paas available nahi hai, hum jaldi hi isko update kar denge, aur aapko turant yeh information mil jayegi!" or similar encouraging message, never apologize unnecessarily.
 
 ### UI MARKERS (RAW TEXT, NO BACKTICKS):
 - [[FACULTY_LIST:Department]] (Show ONLY if asked for a list of teachers in a department)
@@ -1077,6 +1203,10 @@ const SYSTEM_PROMPT = `You are "Lohia College AI", a High-Performance Multi-Agen
 // LOHIA DATA PRE-FETCH AGENT (Highly Optimized / Lazy)
 async function prefetchCollegeContext(prompt: string, semanticCorrection: string | null, profile?: StudentProfile) {
   const lowerPrompt = prompt.toLowerCase();
+  // Skip ALL pre-fetching and hardcoded responses for harmful/violent queries! Let the AI model handle it naturally!
+  if (isHarmfulOrViolent(prompt)) {
+    return null;
+  }
   // Use shared constant instead of repeating the URL here
   const principalImageUrl = COLLEGE_CONTACTS.principalImageUrl;
   const hasFounderIntent = isFounderIntent(prompt);
@@ -1124,19 +1254,45 @@ Instruction: Answer topper/merit questions from these rows in a clean Markdown t
   // Sports intent is handled directly in generateChatResponseStream via formatSportsRows.
   // Do NOT also fetch here — it causes a duplicate DB call for every sports query.
 
-  // 1. Current Principal Info (Keep this for the visual Principal card)
-  if (lowerPrompt.includes('principal') || lowerPrompt.includes('mukhyadhyapak') || semanticCorrection === 'Manju Sharma') {
+  // 1. Current Principal Info (Keep this for the visual Principal card) - only for neutral, explicit queries
+  const refersToPrincipal = lowerPrompt.includes('principal') || lowerPrompt.includes('mukhyadhyapak') || lowerPrompt.includes('manju sharma') || semanticCorrection === 'Manju Sharma';
+  
+  if (refersToPrincipal) {
     const isPastQuery = lowerPrompt.includes('past') || lowerPrompt.includes('purane') || lowerPrompt.includes('former') || lowerPrompt.match(/\b(19\d{2}|20\d{2})\b/);
     const isNegativeFeedback = hasNegativeFeedbackIntent(prompt);
     if (isNegativeFeedback) {
       return `Context: User is giving negative feedback/complaint about the principal. Do NOT show PRINCIPAL_CARD or image. Respond respectfully and humanly: acknowledge the concern, avoid agreeing with insulting language, ask for the specific issue, and guide them to the proper college office/grievance channel if needed.`;
     }
     if (!isPastQuery) {
-      const principal = await getPrincipalInfo();
+      const [principal, principalInfo] = await Promise.all([
+        getPrincipalInfo(),
+        getPrincipalFullInfo()
+      ]);
+      
+      let contextAddition = "";
       if (principal) {
-        const img = principalImageUrl;
-        return `Context: Principal is ${principal.value}. Photo: ${img}. Response: Hamari college ki principal ${principal.value} hain. [[PRINCIPAL_CARD:${principal.value}:${img}]]`;
+        contextAddition += `\n[PRINCIPAL_NAME]: Current principal is ${principal.value}. Photo: ${principalImageUrl}`;
       }
+      if (principalInfo?.value) {
+        contextAddition += `\n[PRINCIPAL_INFO_DETAILS]: ${principalInfo.value}`;
+      }
+      
+      const hasFieldOnlyQuery = hasFacultyFieldIntent(prompt);
+      const isExplicitPrincipalQuery = 
+        !hasFieldOnlyQuery &&
+        (
+          /who is|kaun hai|kon hai|name kya|kya name|profile|photo|image|details|kya ha|kaise hain/i.test(lowerPrompt) ||
+          lowerPrompt.trim() === "principal" || 
+          lowerPrompt.trim() === "principal mam" ||
+          lowerPrompt.trim() === "प्रिंసిపల్" ||
+          lowerPrompt.trim() === "ప్రధానాచార్య"
+        );
+      
+      if (isExplicitPrincipalQuery && principal) {
+        return `Context: Principal is ${principal.value}. Photo: ${principalImageUrl}. Response: Hamari college ki principal ${principal.value} hain. [[PRINCIPAL_CARD:${principal.value}:${principalImageUrl}]]\n${contextAddition}`;
+      }
+      
+      return contextAddition;
     }
   }
 
@@ -1168,9 +1324,14 @@ export async function* generateChatResponseStream(
   profile?: StudentProfile, signal?: AbortSignal): AsyncGenerator<{ text: string; provider?: string }> {
   try {
     // FIX: Fast cache check must happen FIRST — before any DB/async calls
-    // BUT SKIP CACHE FOR TOPPER/MERIT QUERIES
+    // BUT SKIP CACHE FOR TOPPER/MERIT QUERIES, NEGATIVE QUERIES, OR HARMFUL QUERIES
     const isMeritQuery = hasMeritIntent(prompt);
-    if (!isMeritQuery) {
+    const isHarmfulOrNegative = 
+      isHarmfulOrViolent(prompt) ||
+      hasNegativeFeedbackIntent(prompt) || 
+      hasPersonFeedbackIntent(prompt);
+      
+    if (!isMeritQuery && !isHarmfulOrNegative) {
       const fastAnswer = findFastAnswer(prompt);
       if (fastAnswer) {
         yield { text: fastAnswer, provider: "Lohia-Speed-Cache" };
@@ -1183,11 +1344,33 @@ export async function* generateChatResponseStream(
     // Collect all matching responses instead of returning early
     const responses: string[] = [];
 
-    if (hasPrincipalContactIntent(prompt)) {
-      responses.push(await formatPrincipalContactResponse());
-    } else if (/principal|principal\s*mam|ప్రింసిపల్|ప్రధానాచార్య/i.test(prompt)) {
-      const principalInfo = await getPrincipalInfo();
-      responses.push(`[[PRINCIPAL_CARD:${principalInfo?.value || COLLEGE_CONTACTS.principalName}:${COLLEGE_CONTACTS.principalImageUrl}]]\n\nHamari college ki principal **${principalInfo?.value || COLLEGE_CONTACTS.principalName}** hain.`);
+    // Only use college-specific helpers for neutral, college-related queries
+    if (!isHarmfulOrNegative && hasCollegeDomainSignal(prompt)) {
+      if (hasPrincipalContactIntent(prompt)) {
+        responses.push(await formatPrincipalContactResponse());
+      } else {
+      // Only show principal card for neutral, explicit queries about principal (name, who is, profile, photo)
+      const lowerPrompt = prompt.toLowerCase();
+      const isFieldOnlyQuery = hasFacultyFieldIntent(prompt);
+      const isNeutralPrincipalQuery = 
+        !isFieldOnlyQuery &&
+        (/principal|principal\s*mam|ప్రింసిపల్|ప్రధానాచార్య/i.test(prompt)) &&
+        (
+          /who is|kaun hai|kon hai|name kya|kya name|profile|photo|image|details|kya ha|kaise hain/i.test(lowerPrompt) ||
+          // Exact short queries like "principal" or "principal mam"
+          lowerPrompt.trim() === "principal" || 
+          lowerPrompt.trim() === "principal mam" ||
+          lowerPrompt.trim() === "ప్రింసిపల్" ||
+          lowerPrompt.trim() === "ప్రధానాచార్య"
+        ) &&
+        // NOT if it's negative feedback or harmful query
+        !hasNegativeFeedbackIntent(prompt) &&
+        !hasPersonFeedbackIntent(prompt);
+        
+      if (isNeutralPrincipalQuery) {
+        const principalInfo = await getPrincipalInfo();
+        responses.push(`[[PRINCIPAL_CARD:${principalInfo?.value || COLLEGE_CONTACTS.principalName}:${COLLEGE_CONTACTS.principalImageUrl}]]\n\nHamari college ki principal **${principalInfo?.value || COLLEGE_CONTACTS.principalName}** hain.`);
+      }
     }
 
     if (hasCollegeBasicInfoIntent(prompt)) {
@@ -1222,13 +1405,6 @@ export async function* generateChatResponseStream(
       responses.push(await buildPersonFeedbackResponse(prompt, semanticCorrection));
     }
 
-    const sectionKeys = getCollegeSectionIntents(prompt);
-    if (sectionKeys.length > 0) {
-      const sectionsByKey = await Promise.all(sectionKeys.map(key => getCollegeSections(key)));
-      const sections = sectionsByKey.flat();
-      responses.push(formatCollegeSectionRows(sections, sectionKeys.join(', ')));
-    }
-
     if (isFounderIntent(prompt)) {
       const sections = await getCollegeSections('founder');
       const founderContent = sections?.[0]?.content || sections?.[0]?.title || 'Lohia College ke founder Seth Kanhiya Lal Lohia hain.';
@@ -1239,7 +1415,34 @@ export async function* generateChatResponseStream(
       responses.push("Aapki baat samajh raha hoon. Agar Principal Mam se related koi specific issue ya complaint hai, to kripya detail batayein taaki sahi guidance di ja sake. Vyakti ke liye apmaanjanak language use karne ke bajay exact issue clearly likhna behtar rahega. Formal complaint ke liye college office ya grievance channel se sampark karein.");
     }
 
-    if (hasFacultyFieldIntent(prompt)) {
+    const lowerPrompt = prompt.toLowerCase();
+    const isPrincipalFieldQuery = 
+      (lowerPrompt.includes('principal') || lowerPrompt.includes('mukhyadhyapak') || semanticCorrection === 'Manju Sharma') &&
+      hasFacultyFieldIntent(prompt);
+    
+    if (isPrincipalFieldQuery) {
+      // Try to get detailed info from principal_info row in college_info table
+      const principalInfo = await getPrincipalFullInfo();
+      if (principalInfo?.value) {
+        const parsedDetails = parsePrincipalInfoSection(principalInfo.value, prompt);
+        responses.push(parsedDetails);
+      } else {
+        // Handle principal field queries separately - search specifically for Manju Sharma from faculty table
+        const requestedFields = getRequestedFacultyFields(prompt);
+        const facultyMatches = await searchFaculty({ name: 'Manju Sharma' });
+        // Strictly filter to only Manju Sharma
+        const strictPrincipalMatches = facultyMatches.filter(f => {
+          const lowerName = f.name.toLowerCase();
+          return lowerName.includes('manju') && lowerName.includes('sharma') && !lowerName.includes('karuna');
+        });
+        
+        if (strictPrincipalMatches.length > 0) {
+          responses.push(formatFacultyFieldResponse(strictPrincipalMatches[0], requestedFields));
+        } else {
+          responses.push("Principal Mam ki exact qualification details abhi update kar rahe hain. Jaldi hi yeh information available ho jayegi!");
+        }
+      }
+    } else if (hasFacultyFieldIntent(prompt)) {
       const requestedFields = getRequestedFacultyFields(prompt);
       const facultyMatches = await searchFaculty({ name: semanticCorrection || prompt });
       if (facultyMatches.length > 0) {
@@ -1314,7 +1517,7 @@ export async function* generateChatResponseStream(
         ].filter(Boolean).join(', ');
         responses.push(`${marker}\n\nPaper schedule ke liye ${missing} select karke search karein.`);
       } else {
-        const rows = await searchMainExams({ subject, status, level, semester: Number(semester) });
+        const rows = await searchMainExams({ query: prompt, subject, status, level, semester: Number(semester) });
         responses.push(formatExamRows(rows, subject));
       }
     }
@@ -1328,15 +1531,16 @@ export async function* generateChatResponseStream(
       responses.push(`[[EVENT_EXPLORER:${getEventQuery(prompt)}]]\n\nMatching events yahan dekh sakte hain.`);
     }
 
-    const uploadedKnowledgeMatches = await searchKnowledgeItems(prompt);
-    if (uploadedKnowledgeMatches.length > 0) {
-      const response = formatKnowledgeItemResponse(uploadedKnowledgeMatches);
-      if (response) {
-        responses.push(response);
+      const uploadedKnowledgeMatches = await searchKnowledgeItems(prompt);
+      if (uploadedKnowledgeMatches.length > 0) {
+        const response = formatKnowledgeItemResponse(uploadedKnowledgeMatches);
+        if (response) {
+          responses.push(response);
+        }
       }
     }
 
-    // If we collected any responses, yield them all combined!
+    // If we collected any specific college responses, yield them! Otherwise, let AI model handle it naturally!
     if (responses.length > 0) {
       yield {
         text: responses.join('\n\n---\n\n'),
@@ -1364,7 +1568,7 @@ export async function* generateChatResponseStream(
 
     const lowerPrompt = prompt.toLowerCase();
 
-    if (globalCacheHit && !isMeritQuery) {
+    if (globalCacheHit && !isMeritQuery && !isHarmfulOrNegative) {
       yield { text: sanitizeUserText(globalCacheHit), provider: "Lohia-Global-Cache" };
       return;
     }
