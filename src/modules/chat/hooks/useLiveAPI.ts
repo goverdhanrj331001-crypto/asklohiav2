@@ -66,6 +66,123 @@ const DAILY_LIMIT = 40;
 const LIVE_MODEL = process.env.NEXT_PUBLIC_GEMINI_LIVE_MODEL || "gemini-3.1-flash-live-preview";
 const LIVE_VOICE = process.env.NEXT_PUBLIC_GEMINI_LIVE_VOICE || "Aoede";
 
+const inferExamDepartment = (text: string) => {
+  const lower = text.toLowerCase();
+  if (/\bscience\b|bsc|b\.sc|msc|m\.sc|science|बी\s*एससी|बीएससी|विज्ञान/i.test(lower)) return 'Science';
+  if (/\barts\b|ba|b\.a|ma|m\.a|बी\s*ए|बीए|कला/i.test(lower)) return 'Arts';
+  if (/\bcommerce\b|bcom|b\.com|mcom|m\.com|बी\s*कॉम|बीकॉम|वाणिज्य/i.test(lower)) return 'Commerce';
+  return undefined;
+};
+
+const inferExamSubject = (text: string) => {
+  const lower = text.toLowerCase();
+  const subjects: Array<[RegExp, string]> = [
+    [/physics|fijiks|फिजिक्स|भौतिक/, 'Physics'],
+    [/chemistry|केमिस्ट्री|रसायन/, 'Chemistry'],
+    [/zoology|जूओजी|प्राणी/, 'Zoology'],
+    [/botany|बॉटनी|वनस्पति/, 'Botany'],
+    [/mathematics|maths?|गणित/, 'Mathematics'],
+    [/geography|geog|भूगोल/, 'Geography'],
+    [/history|इतिहास/, 'History'],
+    [/sociology|socio|समाजशास्त्र/, 'Sociology'],
+    [/political|pol\s*science|राजनीति/, 'Political Science'],
+    [/economics|eco|अर्थशास्त्र/, 'Economics'],
+    [/hindi|हिंदी/, 'Hindi'],
+    [/english|अंग्रेज़ी/, 'English'],
+    [/sanskrit|संस्कृत/, 'Sanskrit'],
+    [/public\s*administration|लोक\s*प्रशासन/, 'Public Administration'],
+    [/psychology|मनोविज्ञान/, 'Psychology'],
+    [/home\s*science|गृह\s*विज्ञान/, 'Home Science'],
+    [/drawing|चित्रकला/, 'Drawing'],
+    [/music|संगीत/, 'Music'],
+    [/\babst\b|a\.b\.s\.t|account|accounts|accounting/, 'ABST'],
+    [/\beafm\b|e\.a\.f\.m/, 'EAFM'],
+    [/\bbadm\b|business\s*administration/, 'BADM'],
+    [/computer|bca|cit/, 'Computer Science']
+  ];
+  return subjects.find(([pattern]) => pattern.test(lower))?.[1];
+};
+
+const inferExamStatus = (text: string) => {
+  const lower = text.toLowerCase();
+  if (/non[-\s]?collegiate|non\s*college|noncollege|private|एन\s*सी|नॉन\s*कॉलेजिएट|नॉन-कॉलेजिएट|नॉन/.test(lower)) return 'Non-Collegiate';
+  if (/collegiate|regular|college student|regular student|कॉलेजिएट|कोलेजिएट|रेगुलर/.test(lower)) return 'Collegiate';
+  return undefined;
+};
+
+const inferExamLevel = (text: string) => {
+  const lower = text.toLowerCase();
+  if (/\bpg\b|post\s*graduate|postgraduate|m\.?sc|m\.?a|m\.?com|एम\s*ए|एम\s*एससी/.test(lower)) return 'PG';
+  if (/\bug\b|\bgraduate\b|under\s*graduate|undergraduate|b\.?sc|b\.?a|b\.?com|बी\s*ए|बी\s*एससी/.test(lower)) return 'UG';
+  return undefined;
+};
+
+const inferExamSemester = (text: string) => {
+  const lower = text.toLowerCase();
+  const numeric = lower.match(/\bsem(?:ester)?\s*[-:]?\s*([1-6])\b|\b([1-6])(?:st|nd|rd|th)?\s*sem(?:ester)?\b/);
+  if (numeric) return numeric[1] || numeric[2];
+  if (/first|1st|sem\s*one|semester\s*one|फर्स्ट|पहला|प्रथम/.test(lower)) return '1';
+  if (/second|2nd|sem\s*two|semester\s*two|सेकंड|दूसरा|द्वितीय/.test(lower)) return '2';
+  if (/third|3rd|sem\s*three|semester\s*three|थर्ड|तीसरा|तृतीय/.test(lower)) return '3';
+  if (/fourth|4th|sem\s*four|semester\s*four|फोर्थ|चौथा/.test(lower)) return '4';
+  if (/fifth|5th|sem\s*five|semester\s*five|फिफ्थ|पांचवां/.test(lower)) return '5';
+  if (/sixth|6th|sem\s*six|semester\s*six|सिक्स्थ|छठा/.test(lower)) return '6';
+  return undefined;
+};
+
+const hasLiveExamIntent = (text: string) =>
+  /exam|paper|papers|timetable|schedule|date|kab|पेपर|परीक्षा|एग्जाम/i.test(text);
+
+const hasEnoughExamDetails = (rows: any[]) =>
+  rows.length > 0 && !rows.some((row: any) => row?.needs_clarification);
+
+const formatDateForVoice = (date?: string) => {
+  if (!date) return 'date available nahi hai';
+  const parsed = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  return parsed.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+};
+
+const formatTimeForVoice = (time?: string) => {
+  if (!time) return 'time available nahi hai';
+  const [hourValue, minuteValue] = time.split(':').map(Number);
+  if (Number.isNaN(hourValue) || Number.isNaN(minuteValue)) return time;
+  const suffix = hourValue >= 12 ? 'PM' : 'AM';
+  const hour = hourValue % 12 || 12;
+  return `${hour}:${String(minuteValue).padStart(2, '0')} ${suffix}`;
+};
+
+const formatLiveExamAnswer = (rows: any[], originalQuery: string) => {
+  const clarification = rows.find((row: any) => row?.needs_clarification);
+  if (clarification) {
+    return clarification.message || 'Exam schedule ke liye kripya batayein: aap Collegiate hain ya Non-Collegiate, UG hain ya PG, aur semester kaunsa hai.';
+  }
+
+  if (!rows.length) {
+    return 'Maaf kijiye, is exam schedule ka exact record abhi available information me nahi mila. Kripya apna course, semester, status aur subject ek baar clear bata dein, main dobara check kar dungi.';
+  }
+
+  const first = rows[0];
+  const subjectCount = new Set(rows.map((row: any) => row.subject).filter(Boolean)).size;
+  const heading = `${first.department || ''} ${first.level || ''} semester ${first.semester || ''} ${first.status || ''}`.replace(/\s+/g, ' ').trim();
+  const requestedSpecificPaper = /paper\s*(one|two|i|ii|1|2)|पेपर\s*(वन|टू|एक|दो|1|2)/i.test(originalQuery);
+  const maxRows = requestedSpecificPaper ? 2 : Math.min(12, Math.max(8, subjectCount * 2));
+
+  const lines = rows.slice(0, maxRows).map((row: any) =>
+    `${row.subject || 'Subject'} ${row.paper || 'paper'}: ${formatDateForVoice(row.exam_date)}, ${formatTimeForVoice(row.exam_time)}`
+  );
+
+  const extra = rows.length > maxRows
+    ? ` Is schedule me total ${rows.length} papers hain. Baaki papers ke liye subject ka naam bol dijiye.`
+    : '';
+
+  const intro = subjectCount > 1
+    ? `${heading} ke available exam papers ye hain:`
+    : `${heading} ka exam schedule ye hai:`;
+
+  return `${intro} ${lines.join('. ')}.${extra}`;
+};
+
 export function useLiveAPI() {
   const [isConnected, setIsConnected] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -77,6 +194,9 @@ export function useLiveAPI() {
   const processorRef = useRef<any>(null);
   const sessionRef = useRef<any>(null); // To store the live session
   const liveConnectionOpenRef = useRef(false);
+  const examContextRef = useRef('');
+  const lastExamAnswerKeyRef = useRef('');
+  const reconnectAttemptsRef = useRef(0);
 
   const audioQueueRef = useRef<Int16Array[]>([]);
   const isPlayingRef = useRef(false);
@@ -436,14 +556,16 @@ ${contextInfo}`;
         callbacks: {
           onopen: () => {
             liveConnectionOpenRef.current = true;
+            reconnectAttemptsRef.current = 0;
             setIsConnected(true);
 
             setTimeout(() => {
               if (!liveConnectionOpenRef.current) return;
               sessionPromise.then((session) => {
                 try {
-                  session.sendRealtimeInput({
-                    text: "Hello"
+                  session.sendClientContent({
+                    turns: "Hello",
+                    turnComplete: true
                   });
                 } catch (e) { }
               });
@@ -471,6 +593,83 @@ ${contextInfo}`;
               stopAllAudio();
             }
 
+            const inputText = message.serverContent?.inputTranscription?.text?.trim();
+
+            if (message.serverContent?.inputTranscription?.finished && inputText) {
+              const nextContext = `${examContextRef.current} ${inputText}`.replace(/\s+/g, ' ').trim();
+              const shouldHandleExam = hasLiveExamIntent(inputText) || (examContextRef.current && hasLiveExamIntent(examContextRef.current));
+
+              if (shouldHandleExam) {
+                examContextRef.current = nextContext;
+                const answerKey = nextContext.toLowerCase();
+
+                if (answerKey !== lastExamAnswerKeyRef.current) {
+                  try {
+                    // Extract all params
+                    const status = inferExamStatus(nextContext);
+                    const level = inferExamLevel(nextContext);
+                    const semester = inferExamSemester(nextContext);
+                    const subject = inferExamSubject(nextContext);
+                    const department = inferExamDepartment(nextContext);
+                    
+                    // Check if we have enough details
+                    const hasAllDetails = status && level && semester;
+                    
+                    let rows: any[] = [];
+                    if (hasAllDetails) {
+                      if (!subject) {
+                        const wantsAll = /all|sabhi|teeno|sabke|teeno\s*ke|all\s*three|sab\s*ke|poore|pure|saare|sare|तीनों|सारे|सभी|पूरे/i.test(nextContext);
+                        if (!wantsAll) {
+                          // Return clarification message asking for subject
+                          let msg = "Aap kis paper ke baare mein jaanna chahenge? ";
+                          if (department === 'Science') msg += "Physics, Chemistry, ya Maths? Ya aap sabhi papers ke schedule jaanna chahte hain?";
+                          else if (department === 'Arts') msg += "Sociology, Geography, Political Science, History, Hindi Literature, etc.? Ya aap sabhi papers ke schedule jaanna chahte hain?";
+                          else if (department === 'Commerce') msg += "Accounts, Economics, ya Business Administration? Ya aap sabhi papers ke schedule jaanna chahte hain?";
+                          else msg += "Science, Arts, ya Commerce? Ya aap specific subjects ke naam bata sakte hain.";
+                          rows = [{ needs_clarification: true, message: msg }];
+                        }
+                      }
+                      
+                      if (rows.length === 0) {
+                        // If we have all required details, search with params
+                        rows = await searchMainExams({ status, level, semester, subject, department });
+                        // If no rows found, try with broader params
+                        if (rows.length === 0) {
+                          rows = await searchMainExams({ status, level, semester, department });
+                        }
+                        if (rows.length === 0) {
+                          rows = await searchMainExams({ status, level, semester });
+                        }
+                      }
+                    } else {
+                      // If missing details, return a special object to indicate we need to ask
+                      rows = [{ needs_clarification: true, message: 'Kripya thodi aur jankari dein, main aapki madad karungi: Aap Collegiate student hain ya Non-Collegiate? Aap Undergraduate hain ya Postgraduate? Aur semester kaunsa hai?' }];
+                    }
+                    
+                    const answer = formatLiveExamAnswer(rows, nextContext);
+                    const session = await sessionPromise;
+
+                    lastExamAnswerKeyRef.current = answerKey;
+                    stopAllAudio();
+                    session.sendClientContent({
+                      turns: `User asked this exam question/context: "${nextContext}". Reply in natural Hinglish using ONLY this verified college exam answer. Do not mention tools, database, temporary issue, connection, or internal errors. If details are missing, ask only for the missing details. Verified answer: ${answer}`,
+                      turnComplete: true
+                    });
+
+                    if (hasEnoughExamDetails(rows)) {
+                      // Don't update transcript since we're hiding it
+                    }
+                  } catch (err) {
+                    console.error("Live deterministic exam answer failed:", err);
+                    const fallback = 'Maaf kijiye, is exam schedule ka exact record abhi available information me nahi mila. Kripya course, semester, status aur subject clear bata dein, main help kar dungi.';
+                    // Don't update transcript
+                    const session = await sessionPromise;
+                    session.sendClientContent({ turns: fallback, turnComplete: true });
+                  }
+                }
+              }
+            }
+
             if (message.serverContent?.turnComplete) {
               incrementUsage();
             }
@@ -489,7 +688,28 @@ ${contextInfo}`;
                     case 'get_past_principals': result = await getAllPastPrincipals((call.args as any).query); break;
                     case 'get_achievements': result = await getAllAchievements((call.args as any).query); break;
                     case 'search_merit_list': result = await searchMeritList(call.args as any); break;
-                    case 'search_main_exams': result = await searchMainExams(call.args as any); break;
+                    case 'search_main_exams': {
+                      const args = call.args || {};
+                      const { status, level, semester, subject, department, query } = args as any;
+                      if (!status || !level || !semester) {
+                        result = { error: "Missing required parameters. Please ask the user for their status (Collegiate/Non-Collegiate), level (UG/PG), and semester." };
+                        break;
+                      }
+                      if (!subject) {
+                        const wantsAll = /all|sabhi|teeno|sabke|teeno\s*ke|all\s*three|sab\s*ke|poore|pure|saare|sare|तीनों|सारे|सभी|पूरे/i.test(query || '');
+                        if (!wantsAll) {
+                          let msg = "Aap kis paper ke baare mein jaanna chahenge? ";
+                          if (department === 'Science') msg += "Physics, Chemistry, ya Maths? Ya aap sabhi papers ke schedule jaanna chahte hain?";
+                          else if (department === 'Arts') msg += "Sociology, Geography, Political Science, History, Hindi Literature, etc.? Ya aap sabhi papers ke schedule jaanna chahte hain?";
+                          else if (department === 'Commerce') msg += "Accounts, Economics, ya Business Administration? Ya aap sabhi papers ke schedule jaanna chahte hain?";
+                          else msg += "Science, Arts, ya Commerce? Ya aap specific subjects ke naam bata sakte hain.";
+                          result = { instruction_to_model: "Do not say 'error'. Just smoothly ask the user the following question:", question_to_ask: msg };
+                          break;
+                        }
+                      }
+                      result = await searchMainExams(args);
+                      break;
+                    }
                     case 'get_study_material': result = await searchStudyMaterial(call.args as any); break;
                     case 'search_practical_exams': result = await searchPracticalExams(call.args as any); break;
                     case 'search_practical_students': result = await searchPracticalStudentsByName(call.args as any); break;
@@ -511,27 +731,24 @@ ${contextInfo}`;
 
                 toolResponses.push({
                   name: call.name,
-                  response: { data: result },
-                  id: call.id
+                  response: { data: result ?? null },
+                  id: call.id || call.name
                 });
               }
 
               if (toolResponses.length > 0) {
-                session.sendToolResponse({
-                  functionResponses: toolResponses
-                });
+                try {
+                  session.sendToolResponse({
+                    functionResponses: toolResponses
+                  });
+                } catch (err) {
+                  console.error("Live API tool response failed:", err);
+                  setTranscript(prev => `AI: Maaf kijiye, main available information ke basis par answer dungi. Aap apna exam question ek baar aur clear bol dijiye.\n${prev}`);
+                }
               }
             }
 
-            if (message.serverContent?.modelTurn?.parts) {
-              const text = message.serverContent.modelTurn.parts
-                .filter(p => p.text)
-                .map(p => p.text)
-                .join('');
-              if (text) {
-                setTranscript(prev => `AI: ${text}\n${prev}`);
-              }
-            }
+            // Removed transcript updates
 
             const parts = message.serverContent?.modelTurn?.parts;
             const base64Audio = (parts && parts.length > 0) ? parts.find(p => p.inlineData)?.inlineData?.data : undefined;
@@ -555,6 +772,14 @@ ${contextInfo}`;
                 setError("Your Gemini API Key has been suspended.");
               } else if (e.reason && (e.reason.includes("Permission denied") || e.reason.toLowerCase().includes("denied access"))) {
                 setError(`Live Voice access denied hai. Is Gemini API key/project ko ${LIVE_MODEL} ka Live API access nahi mila.`);
+              } else if (e.reason && e.reason.toLowerCase().includes("invalid argument")) {
+                setError(null);
+                if (reconnectAttemptsRef.current < 2) {
+                  reconnectAttemptsRef.current += 1;
+                  window.setTimeout(() => {
+                    if (!liveConnectionOpenRef.current) startConnection();
+                  }, 800);
+                }
               } else if (e.reason) {
                 setError(`Connection closed: ${e.reason}`);
               }
